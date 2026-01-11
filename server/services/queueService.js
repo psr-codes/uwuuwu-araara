@@ -2,11 +2,26 @@ const { createClient } = require("redis");
 
 class QueueService {
   constructor() {
-    this.client = createClient({
-      url: `redis://${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`,
-    });
+    // Support both REDIS_URL (Render) and REDIS_HOST/PORT (Docker)
+    const redisUrl =
+      process.env.REDIS_URL ||
+      `redis://${process.env.REDIS_HOST || "localhost"}:${
+        process.env.REDIS_PORT || 6379
+      }`;
 
-    this.client.on("error", (err) => console.error("Redis Client Error", err));
+    console.log(
+      "[REDIS] Connecting to:",
+      redisUrl.replace(/\/\/.*@/, "//*****@")
+    ); // Hide credentials in logs
+
+    this.client = createClient({ url: redisUrl });
+
+    this.client.on("error", (err) =>
+      console.error("[REDIS] Client Error", err)
+    );
+    this.client.on("connect", () =>
+      console.log("[REDIS] Connected successfully")
+    );
     this.client.connect();
 
     this.QUEUE_KEY = "chat_queue";
