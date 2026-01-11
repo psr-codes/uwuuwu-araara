@@ -24,20 +24,32 @@ class QueueService {
     );
     this.client.connect();
 
-    this.QUEUE_KEY = "chat_queue";
+    // Queue keys for different chat modes
+    this.QUEUE_KEYS = {
+      video: "chat_queue:video",
+      audio: "chat_queue:audio",
+      text: "chat_queue:text",
+    };
   }
 
-  async addUser(socketId) {
-    await this.client.rPush(this.QUEUE_KEY, socketId);
+  getQueueKey(chatMode) {
+    return this.QUEUE_KEYS[chatMode] || this.QUEUE_KEYS.video;
   }
 
-  async findMatch(isUserOnline) {
+  async addUser(socketId, chatMode = "video") {
+    const queueKey = this.getQueueKey(chatMode);
+    console.log(`[QUEUE] Adding ${socketId} to ${queueKey}`);
+    await this.client.rPush(queueKey, socketId);
+  }
+
+  async findMatch(chatMode = "video", isUserOnline) {
+    const queueKey = this.getQueueKey(chatMode);
     let peer1 = null;
     let peer2 = null;
 
     // Find first peer
     while (!peer1) {
-      const id = await this.client.lPop(this.QUEUE_KEY);
+      const id = await this.client.lPop(queueKey);
       if (!id) return null; // Queue empty
 
       if (isUserOnline(id)) {
@@ -47,10 +59,10 @@ class QueueService {
 
     // Find second peer
     while (!peer2) {
-      const id = await this.client.lPop(this.QUEUE_KEY);
+      const id = await this.client.lPop(queueKey);
       if (!id) {
         // No match found for peer1, put them back at the head of the queue
-        await this.client.lPush(this.QUEUE_KEY, peer1);
+        await this.client.lPush(queueKey, peer1);
         return null;
       }
 

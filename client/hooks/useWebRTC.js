@@ -4,12 +4,9 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import io from "socket.io-client";
 import SimplePeer from "simple-peer";
 
-// const SOCKET_URL = "http://192.168.29.237:5001";
-// get from env
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
-console.log("SOCKET_URL", SOCKET_URL);
 
-export function useWebRTC() {
+export function useWebRTC(initialChatMode = "video") {
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState("idle");
@@ -17,6 +14,11 @@ export function useWebRTC() {
   const [socketId, setSocketId] = useState(null);
   const [partnerId, setPartnerId] = useState(null);
   const [debugInfo, setDebugInfo] = useState("");
+  const [chatMode, setChatMode] = useState(initialChatMode);
+
+  // Upgrade request state
+  const [upgradeRequest, setUpgradeRequest] = useState(null); // { from, targetMode }
+  const [upgradeStatus, setUpgradeStatus] = useState(null); // 'pending' | 'accepted' | 'rejected'
 
   const socketRef = useRef(null);
   const peerRef = useRef(null);
@@ -24,6 +26,12 @@ export function useWebRTC() {
   const localStreamRef = useRef(null);
   const isCleaningUp = useRef(false);
   const signalBuffer = useRef([]);
+  const chatModeRef = useRef(initialChatMode);
+
+  // Update chatMode ref when state changes
+  useEffect(() => {
+    chatModeRef.current = chatMode;
+  }, [chatMode]);
 
   // Check if stream tracks are valid
   const validateStream = (stream, label) => {
@@ -37,74 +45,129 @@ export function useWebRTC() {
       `[VALIDATE ${label}] Stream ID: ${stream.id}, Tracks: ${tracks.length}`
     );
 
-    tracks.forEach((track) => {
-      console.log(
-        `[VALIDATE ${label}] Track: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}, muted: ${track.muted}`
-      );
-    });
+    // For text mode, no stream is needed
+    if (chatModeRef.current === "text") return true;
 
-    const hasLiveVideo = tracks.some(
+    // For audio mode, only need audio
+    if (chatModeRef.current === "audio") {
+      return tracks.some(
+        (t) => t.kind === "audio" && t.readyState === "live" && t.enabled
+      );
+    }
+
+    // For video mode, need video
+    return tracks.some(
       (t) => t.kind === "video" && t.readyState === "live" && t.enabled
     );
-    const hasLiveAudio = tracks.some(
-      (t) => t.kind === "audio" && t.readyState === "live" && t.enabled
-    );
-
-    console.log(
-      `[VALIDATE ${label}] Has live video: ${hasLiveVideo}, Has live audio: ${hasLiveAudio}`
-    );
-    return hasLiveVideo;
   };
 
-  // Initialize media
-  const initializeMedia = useCallback(async () => {
-    console.log("[WEBRTC] Initializing media...");
+  // Initialize media based on chat mode
+  const initializeMedia = useCallback(async (mode = null) => {
+    const targetMode = mode || chatModeRef.current;
+    console.log(`[WEBRTC] Initializing media for mode: ${targetMode}`);
+
+    if (targetMode === "text") {
+      console.log("[WEBRTC] Text mode - no media needed");
+      return null;
+    }
 
     // Stop any existing tracks first
     if (localStreamRef.current) {
-      console.log("[WEBRTC] Stopping existing stream tracks");
       localStreamRef.current.getTracks().forEach((track) => track.stop());
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-        },
+      const constraints = {
         audio: true,
-      });
+        video:
+          targetMode === "video"
+            ? { width: { ideal: 640 }, height: { ideal: 480 } }
+            : false,
+      };
 
-      console.log("[WEBRTC] Got local stream:", stream.id);
-      validateStream(stream, "LOCAL");
+      console.log("[WEBRTC] Requesting media with constraints:", constraints);
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
 
       setLocalStream(stream);
       localStreamRef.current = stream;
       return stream;
     } catch (err) {
       console.error("[WEBRTC] Error accessing media devices:", err);
-      setDebugInfo(`Camera error: ${err.message}`);
-      alert("Please enable camera/microphone to use this app.");
+      alert(
+        `Please enable ${
+          targetMode === "video" ? "camera and microphone" : "microphone"
+        } to continue.`
+      );
       return null;
     }
   }, []);
 
-  const cleanup = useCallback(() => {
-    if (isCleaningUp.current) {
-      console.log("[WEBRTC] Already cleaning up, skipping...");
-      return;
+  // Create WebRTC peer connection
+  const createPeer = useCallback((initiator, stream, targetPartnerId) => {
+    console.log("[WEBRTC] Creating SimplePeer, initiator:", initiator);
+
+    const peer = new SimplePeer({
+      initiator,
+      trickle: true,
+      config: {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
+      },
+    });
+
+    // Add stream tracks
+    if (stream) {
+      stream.getTracks().forEach((track) => {
+        console.log(`[PEER] Adding track: ${track.kind}`);
+        peer.addTrack(track, stream);
+      });
     }
+
+    peer.on("signal", (signal) => {
+      console.log("[PEER] Signal generated:", signal.type || "candidate");
+      socketRef.current?.emit("signal", { target: targetPartnerId, signal });
+    });
+
+    peer.on("stream", (remoteStreamData) => {
+      console.log("[PEER] *** RECEIVED REMOTE STREAM ***");
+      setRemoteStream(remoteStreamData);
+    });
+
+    peer.on("track", (track, stream) => {
+      console.log("[PEER] *** RECEIVED TRACK ***:", track.kind);
+      setRemoteStream(stream);
+    });
+
+    peer.on("connect", () => {
+      console.log("[PEER] *** P2P CONNECTION ESTABLISHED ***");
+      setDebugInfo("P2P Connected!");
+    });
+
+    peer.on("error", (err) => {
+      console.error("[PEER] Error:", err.message);
+    });
+
+    peer.on("close", () => {
+      console.log("[PEER] Connection closed");
+      setConnectionStatus("disconnected");
+      setRemoteStream(null);
+    });
+
+    return peer;
+  }, []);
+
+  const cleanup = useCallback(() => {
+    if (isCleaningUp.current) return;
     isCleaningUp.current = true;
-    console.log("[WEBRTC] Cleanup started");
 
     if (peerRef.current) {
-      console.log("[WEBRTC] Destroying peer");
       peerRef.current.destroy();
       peerRef.current = null;
     }
 
     if (socketRef.current) {
-      console.log("[WEBRTC] Disconnecting socket");
       socketRef.current.disconnect();
       socketRef.current = null;
     }
@@ -116,28 +179,22 @@ export function useWebRTC() {
     setSocketId(null);
     setPartnerId(null);
     setDebugInfo("");
+    setUpgradeRequest(null);
+    setUpgradeStatus(null);
 
     isCleaningUp.current = false;
-    console.log("[WEBRTC] Cleanup complete");
   }, []);
 
   const startSearch = useCallback(async () => {
-    console.log("[WEBRTC] startSearch called");
+    console.log(`[WEBRTC] startSearch called for mode: ${chatModeRef.current}`);
 
-    // Always get a fresh stream
     const stream = await initializeMedia();
-    if (!stream) {
+    if (chatModeRef.current !== "text" && !stream) {
       console.error("[WEBRTC] No stream available, aborting");
       return;
     }
 
-    // Validate the stream is actually working
-    if (!validateStream(stream, "BEFORE_PEER")) {
-      console.error("[WEBRTC] Stream validation failed!");
-      setDebugInfo("Stream has no live video track");
-    }
-
-    // Reset previous session (but keep the stream)
+    // Reset previous session
     if (peerRef.current) {
       peerRef.current.destroy();
       peerRef.current = null;
@@ -149,182 +206,204 @@ export function useWebRTC() {
     signalBuffer.current = [];
     setRemoteStream(null);
     setChatHistory([]);
-    setSocketId(null);
-    setPartnerId(null);
+    setUpgradeRequest(null);
+    setUpgradeStatus(null);
 
-    // Small delay
     await new Promise((resolve) => setTimeout(resolve, 100));
-
     setConnectionStatus("searching");
-    console.log("[WEBRTC] Status: searching");
 
-    const socket = io(SOCKET_URL, {
-      transports: ["websocket", "polling"],
-    });
+    const socket = io(SOCKET_URL, { transports: ["websocket", "polling"] });
     socketRef.current = socket;
 
     socket.on("connect", () => {
       console.log("[SOCKET] Connected with ID:", socket.id);
       setSocketId(socket.id);
-      socket.emit("join_queue");
+      socket.emit("join_queue", { chatMode: chatModeRef.current });
     });
 
-    socket.on("socket_id", (id) => {
-      console.log("[SOCKET] Received socket_id:", id);
-      setSocketId(id);
-    });
+    socket.on("socket_id", (id) => setSocketId(id));
 
     socket.on("matched", ({ partnerId: matchedPartnerId, initiator }) => {
-      console.log(
-        "[SOCKET] Matched! Partner:",
-        matchedPartnerId,
-        "Initiator:",
-        initiator
-      );
+      console.log("[SOCKET] Matched! Partner:", matchedPartnerId);
       setConnectionStatus("connected");
       partnerIdRef.current = matchedPartnerId;
       setPartnerId(matchedPartnerId);
 
-      // Get current stream and validate again
-      const currentStream = localStreamRef.current;
-      console.log("[WEBRTC] Creating SimplePeer, initiator:", initiator);
-      validateStream(currentStream, "PEER_CREATION");
-
-      // Create peer WITHOUT stream first, then add it
-      const peer = new SimplePeer({
-        initiator: initiator,
-        trickle: true,
-        config: {
-          iceServers: [
-            { urls: "stun:stun.l.google.com:19302" },
-            { urls: "stun:stun1.l.google.com:19302" },
-            { urls: "stun:stun2.l.google.com:19302" },
-          ],
-        },
-      });
-
-      // Add stream tracks manually
-      if (currentStream) {
-        console.log("[PEER] Adding stream tracks to peer");
-        currentStream.getTracks().forEach((track) => {
-          console.log(
-            `[PEER] Adding track: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`
-          );
-          peer.addTrack(track, currentStream);
-        });
+      // Text mode: No WebRTC needed
+      if (chatModeRef.current === "text") {
+        console.log("[WEBRTC] Text mode - skipping WebRTC peer creation");
+        return;
       }
 
-      peer.on("signal", (signal) => {
-        console.log("[PEER] Signal generated:", signal.type || "candidate");
-        socket.emit("signal", { target: matchedPartnerId, signal });
-      });
-
-      peer.on("stream", (remoteStreamData) => {
-        console.log(
-          "[PEER] *** RECEIVED REMOTE STREAM ***:",
-          remoteStreamData.id
-        );
-        validateStream(remoteStreamData, "REMOTE_RECEIVED");
-        setRemoteStream(remoteStreamData);
-      });
-
-      peer.on("track", (track, stream) => {
-        console.log(
-          "[PEER] *** RECEIVED TRACK ***:",
-          track.kind,
-          "stream:",
-          stream.id
-        );
-        console.log(
-          "[PEER] Track state:",
-          track.enabled,
-          track.readyState,
-          track.muted
-        );
-        // Sometimes stream event doesn't fire but track does
-        setRemoteStream(stream);
-      });
-
-      peer.on("connect", () => {
-        console.log("[PEER] *** P2P CONNECTION ESTABLISHED ***");
-        setDebugInfo("P2P Connected!");
-      });
-
-      peer.on("error", (err) => {
-        console.error("[PEER] Error:", err.message);
-        setDebugInfo(`Peer error: ${err.message}`);
-      });
-
-      peer.on("close", () => {
-        console.log("[PEER] Connection closed");
-        setConnectionStatus("disconnected");
-        setRemoteStream(null);
-        partnerIdRef.current = null;
-        setPartnerId(null);
-      });
-
+      const currentStream = localStreamRef.current;
+      const peer = createPeer(initiator, currentStream, matchedPartnerId);
       peerRef.current = peer;
 
-      // Apply any buffered signals
-      if (signalBuffer.current.length > 0) {
-        console.log(
-          "[WEBRTC] Applying",
-          signalBuffer.current.length,
-          "buffered signals"
-        );
-        signalBuffer.current.forEach((bufferedSignal) => {
-          console.log(
-            "[PEER] Applying buffered signal:",
-            bufferedSignal.type || "candidate"
-          );
-          peer.signal(bufferedSignal);
-        });
-        signalBuffer.current = [];
-      }
+      // Apply buffered signals
+      signalBuffer.current.forEach((s) => peer.signal(s));
+      signalBuffer.current = [];
     });
 
     socket.on("signal", ({ sender, signal }) => {
-      console.log(
-        "[SOCKET] Received signal from:",
-        sender,
-        "type:",
-        signal.type || "candidate"
-      );
-
       if (peerRef.current) {
-        console.log("[PEER] Applying signal immediately");
         try {
           peerRef.current.signal(signal);
         } catch (err) {
           console.error("[PEER] Error applying signal:", err.message);
         }
       } else {
-        console.log("[PEER] Peer not ready, buffering signal");
         signalBuffer.current.push(signal);
       }
     });
 
     socket.on("chat_message", ({ message }) => {
-      console.log("[CHAT] Received message:", message);
       setChatHistory((prev) => [...prev, { sender: "partner", text: message }]);
     });
 
-    socket.on("disconnect", () => {
-      console.log("[SOCKET] Disconnected from server");
+    // ========== UPGRADE HANDLERS ==========
+
+    socket.on("upgrade_request", ({ from, targetMode }) => {
+      console.log(
+        `[UPGRADE] Received upgrade request to ${targetMode} from ${from}`
+      );
+      setUpgradeRequest({ from, targetMode });
     });
 
-    socket.on("connect_error", (err) => {
-      console.error("[SOCKET] Connection error:", err.message);
-    });
-  }, [initializeMedia]);
+    socket.on("upgrade_response", ({ from, accepted, targetMode }) => {
+      console.log(
+        `[UPGRADE] Partner ${
+          accepted ? "accepted" : "rejected"
+        } upgrade to ${targetMode}`
+      );
+      setUpgradeStatus(accepted ? "accepted" : "rejected");
 
-  const sendMessage = useCallback((text) => {
-    if (!partnerIdRef.current || !socketRef.current) {
-      console.warn("[CHAT] Cannot send message: no partner or socket");
+      if (accepted) {
+        // Upgrade our mode and initialize media
+        // Requester is the initiator
+        performUpgrade(targetMode, true);
+      }
+
+      // Clear status after 3 seconds
+      setTimeout(() => setUpgradeStatus(null), 3000);
+    });
+
+    socket.on("partner_disconnected", () => {
+      console.log("[SOCKET] Partner disconnected");
+      setConnectionStatus("disconnected");
+      setRemoteStream(null);
+    });
+
+    socket.on("disconnect", () =>
+      console.log("[SOCKET] Disconnected from server")
+    );
+  }, [initializeMedia, createPeer]);
+
+  // Perform the actual upgrade by adding tracks to existing peer
+  const performUpgrade = useCallback(
+    async (targetMode, isInitiator = false) => {
+      console.log(
+        `[UPGRADE] Performing upgrade to ${targetMode}, initiator: ${isInitiator}`
+      );
+
+      // Update mode
+      setChatMode(targetMode);
+      chatModeRef.current = targetMode;
+
+      // For text→audio or text→video, we need to create a peer first
+      // since text mode has no peer
+      if (!peerRef.current) {
+        console.log("[UPGRADE] No existing peer, creating new one");
+        const stream = await initializeMedia(targetMode);
+        if (!stream) {
+          console.error("[UPGRADE] Failed to get media for upgrade");
+          return;
+        }
+        const peer = createPeer(isInitiator, stream, partnerIdRef.current);
+        peerRef.current = peer;
+        return;
+      }
+
+      // For audio→video upgrade, we just need to add video track
+      // The existing peer connection stays alive
+      console.log("[UPGRADE] Adding new tracks to existing peer");
+
+      // Stop old tracks
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+
+      // Get new media with video
+      const stream = await initializeMedia(targetMode);
+      if (!stream) {
+        console.error("[UPGRADE] Failed to get media for upgrade");
+        return;
+      }
+
+      // Add new tracks to existing peer
+      // SimplePeer will handle renegotiation automatically
+      try {
+        stream.getTracks().forEach((track) => {
+          console.log(`[UPGRADE] Adding track: ${track.kind}`);
+          peerRef.current.addTrack(track, stream);
+        });
+      } catch (err) {
+        console.error("[UPGRADE] Error adding tracks:", err);
+        // Fallback: destroy and recreate peer
+        peerRef.current.destroy();
+        const peer = createPeer(isInitiator, stream, partnerIdRef.current);
+        peerRef.current = peer;
+      }
+    },
+    [initializeMedia, createPeer]
+  );
+
+  // Request to upgrade chat mode
+  const requestUpgrade = useCallback((targetMode) => {
+    if (!socketRef.current || !partnerIdRef.current) {
+      console.warn("[UPGRADE] Cannot request upgrade: no connection");
       return;
     }
 
-    console.log("[CHAT] Sending message:", text, "to:", partnerIdRef.current);
+    console.log(`[UPGRADE] Requesting upgrade to ${targetMode}`);
+    setUpgradeStatus("pending");
+
+    socketRef.current.emit("upgrade_request", {
+      target: partnerIdRef.current,
+      targetMode,
+    });
+  }, []);
+
+  // Respond to upgrade request
+  const respondToUpgrade = useCallback(
+    async (accepted) => {
+      if (!upgradeRequest || !socketRef.current) return;
+
+      const { from, targetMode } = upgradeRequest;
+      console.log(
+        `[UPGRADE] Responding ${
+          accepted ? "accept" : "reject"
+        } to upgrade to ${targetMode}`
+      );
+
+      socketRef.current.emit("upgrade_response", {
+        target: from,
+        accepted,
+        targetMode,
+      });
+
+      if (accepted) {
+        // Accepter is NOT the initiator (the requester is)
+        await performUpgrade(targetMode, false);
+      }
+
+      setUpgradeRequest(null);
+    },
+    [upgradeRequest, performUpgrade]
+  );
+
+  const sendMessage = useCallback((text) => {
+    if (!partnerIdRef.current || !socketRef.current) return;
+
     socketRef.current.emit("chat_message", {
       target: partnerIdRef.current,
       message: text,
@@ -333,8 +412,6 @@ export function useWebRTC() {
   }, []);
 
   const stop = useCallback(() => {
-    console.log("[WEBRTC] stop called");
-    // Also stop the local stream
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
@@ -342,12 +419,12 @@ export function useWebRTC() {
     }
     cleanup();
     setConnectionStatus("idle");
-  }, [cleanup]);
+    setChatMode(initialChatMode);
+    chatModeRef.current = initialChatMode;
+  }, [cleanup, initialChatMode]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      console.log("[WEBRTC] Component unmounting, cleaning up...");
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => track.stop());
       }
@@ -366,5 +443,11 @@ export function useWebRTC() {
     socketId,
     partnerId,
     debugInfo,
+    chatMode,
+    // Upgrade functionality
+    upgradeRequest,
+    upgradeStatus,
+    requestUpgrade,
+    respondToUpgrade,
   };
 }

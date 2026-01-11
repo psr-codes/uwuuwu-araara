@@ -1,14 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // For Render Static Site deployment
-  output: "export",
+  // Removed output: 'export' to enable API routes for Supabase analytics
+  // Deploy as Web Service on Render instead of Static Site
 
-  // Disable image optimization for static export
+  // Disable image optimization for compatibility
   images: {
     unoptimized: true,
   },
 
-  // Ensure trailing slashes for static hosting
+  // Ensure trailing slashes for cleaner URLs
   trailingSlash: true,
 };
 

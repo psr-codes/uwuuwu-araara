@@ -1,0 +1,35 @@
+// Prisma 5 schema for Supabase PostgreSQL
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// Analytics: Track page visits
+model Visit {
+  id         BigInt   @id @default(autoincrement())
+  createdAt  DateTime @default(now()) @map("created_at")
+  userAgent  String?  @map("user_agent")
+  referrer   String?
+  page       String
+
+  @@map("visits")
+}
+
+// Analytics: Track chat connections/matches
+model Connection {
+  id              BigInt   @id @default(autoincrement())
+  createdAt       DateTime @default(now()) @map("created_at")
+  chatMode        String   @map("chat_mode")
+  peer1Id         String?  @map("peer1_id")
+  peer2Id         String?  @map("peer2_id")
+  durationSeconds Int?     @map("duration_seconds")
+
+  @@map("connections")
+}

@@ -4,6 +4,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const socketHandler = require("./socket/socketHandler");
+const { trackVisit, getAnalyticsSummary } = require("./services/analytics");
 
 const app = express();
 const server = http.createServer(app);
@@ -21,8 +22,28 @@ const io = new Server(server, {
 // Initialize Socket Logic
 socketHandler(io);
 
+// Health check
 app.get("/", (req, res) => {
   res.send("Server is running");
+});
+
+// Analytics API: Track a visit
+app.post("/api/analytics/visit", async (req, res) => {
+  const { page, userAgent, referrer } = req.body;
+
+  if (!page) {
+    return res.status(400).json({ error: "page is required" });
+  }
+
+  const result = await trackVisit(page, userAgent, referrer);
+  // Convert BigInt to string for JSON serialization
+  res.json({ success: !!result, id: result?.id?.toString() });
+});
+
+// Analytics API: Get summary stats
+app.get("/api/analytics/stats", async (req, res) => {
+  const stats = await getAnalyticsSummary();
+  res.json(stats || { error: "Failed to get stats" });
 });
 
 const PORT = process.env.PORT || 5000;
