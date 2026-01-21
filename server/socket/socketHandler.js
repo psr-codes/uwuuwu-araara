@@ -1,5 +1,6 @@
 const queueService = require("../services/queueService");
 const { trackConnection } = require("../services/analytics");
+const registerGameHandler = require("./handlers/gameHandler");
 
 module.exports = (io) => {
   // Track active connections for upgrade requests
@@ -8,10 +9,13 @@ module.exports = (io) => {
   io.on("connection", (socket) => {
     console.log(`[SOCKET] User connected: ${socket.id}`);
 
+    // Register game event handlers
+    registerGameHandler(io, socket, activeConnections);
+
     socket.on("join_queue", async (data = {}) => {
       const chatMode = data.chatMode || "video";
       console.log(
-        `[QUEUE] User ${socket.id} joining queue (mode: ${chatMode})`
+        `[QUEUE] User ${socket.id} joining queue (mode: ${chatMode})`,
       );
 
       await queueService.addUser(socket.id, chatMode);
@@ -37,7 +41,7 @@ module.exports = (io) => {
         trackConnection(chatMode, peer1, peer2);
       } else {
         console.log(
-          `[QUEUE] No match for ${socket.id} in ${chatMode}, waiting`
+          `[QUEUE] No match for ${socket.id} in ${chatMode}, waiting`,
         );
       }
     });
@@ -47,7 +51,7 @@ module.exports = (io) => {
       console.log(
         `[SIGNAL] ${socket.id} -> ${target} (type: ${
           signal.type || "candidate"
-        })`
+        })`,
       );
       io.to(target).emit("signal", { sender: socket.id, signal });
     });
@@ -64,7 +68,7 @@ module.exports = (io) => {
     socket.on("upgrade_request", (data) => {
       const { target, targetMode } = data;
       console.log(
-        `[UPGRADE] ${socket.id} requesting upgrade to ${targetMode} with ${target}`
+        `[UPGRADE] ${socket.id} requesting upgrade to ${targetMode} with ${target}`,
       );
 
       io.to(target).emit("upgrade_request", {
@@ -79,7 +83,7 @@ module.exports = (io) => {
       console.log(
         `[UPGRADE] ${socket.id} ${
           accepted ? "accepted" : "rejected"
-        } upgrade to ${targetMode}`
+        } upgrade to ${targetMode}`,
       );
 
       io.to(target).emit("upgrade_response", {

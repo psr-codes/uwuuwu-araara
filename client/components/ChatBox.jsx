@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Send } from 'lucide-react';
 
-export default function ChatBox({ messages, onSendMessage, disabled }) {
+export default function ChatBox({ messages, onSendMessage, disabled, hideHeader = false }) {
   const [input, setInput] = useState('');
   const scrollRef = useRef();
 
@@ -23,10 +23,12 @@ export default function ChatBox({ messages, onSendMessage, disabled }) {
 
   return (
     <div className="flex flex-col h-full bg-gray-900 border-l border-gray-800">
-      {/* Header */}
-      <div className="p-4 border-b border-gray-800 bg-gray-950">
-        <h3 className="text-white font-semibold">Chat</h3>
-      </div>
+      {/* Header - optionally hidden */}
+      {!hideHeader && (
+        <div className="p-4 border-b border-gray-800 bg-gray-950">
+          <h3 className="text-white font-semibold">Chat</h3>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>

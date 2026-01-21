@@ -16,10 +16,13 @@ import {
   ArrowUpRight,
   X,
   Check,
+  Gamepad2,
 } from "lucide-react";
 import { useWebRTC } from "../../../hooks/useWebRTC";
 import VideoPlayer from "../../../components/VideoPlayer";
 import ChatBox from "../../../components/ChatBox";
+import GameInviteModal from "../../../components/GameInviteModal";
+import GamePanel from "../../../components/GamePanel";
 import { useVisitTracker } from "../../../hooks/useVisitTracker";
 
 const VALID_MODES = ["video", "audio", "text"];
@@ -87,10 +90,28 @@ export default function ChatPage() {
     upgradeStatus,
     requestUpgrade,
     respondToUpgrade,
+    // Game functionality
+    gameState,
+    gameProposal,
+    gameStatus,
+    lastGameAction,
+    requestGame,
+    respondToGame,
+    sendGameAction,
+    endGame,
+    gameStats,
+    recordGameResult,
   } = useWebRTC(initialMode);
 
   const [mobileTab, setMobileTab] = useState("main");
   const [textInput, setTextInput] = useState("");
+  const [showGameMenu, setShowGameMenu] = useState(false);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
+
+  // Available games
+  const AVAILABLE_GAMES = [
+    { id: "tictactoe", name: "Tic Tac Toe", icon: "🎮" },
+  ];
 
   // Update URL when mode changes (from upgrade) - use replaceState to avoid re-render
   useEffect(() => {
@@ -123,8 +144,60 @@ export default function ChatPage() {
     }
   };
 
-  // Idle state - Start screen
+  // Auto-start search on mount
+  const [isInitializing, setIsInitializing] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const init = async () => {
+      if (connectionStatus === "idle" && mounted) {
+        setIsInitializing(true);
+        try {
+          // Add a small delay for better UX (prevents instant flash if permissions are already granted)
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          if (mounted) {
+            // Pass the initial mode explicitly to ensure correct media constraints
+            // The hook might use the ref, but passing it is safer
+            await startSearch();
+          }
+        } catch (error) {
+          console.error("Auto-start failed:", error);
+        } finally {
+          if (mounted) setIsInitializing(false);
+        }
+      }
+    };
+
+    init();
+
+    return () => {
+      mounted = false;
+    };
+    // We only want to run this once on mount, hence the empty dependency array
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Idle state - Start screen or Initializing
   if (connectionStatus === "idle") {
+    // Show loading state while initializing (requesting permissions etc.)
+    if (isInitializing) {
+      return (
+        <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center text-white p-4">
+          <div className="flex flex-col items-center gap-4 animate-pulse">
+            <div className={`p-4 rounded-full bg-gray-900 ${config.textClass}`}>
+              <Icon size={48} />
+            </div>
+            <h2 className="text-2xl font-bold">
+              Initializing {config.label}...
+            </h2>
+            <p className="text-gray-400">Requesting device permissions</p>
+          </div>
+        </div>
+      );
+    }
+
+    // Fallback manual start screen (only if auto-start failed or cancelled)
     return (
       <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center text-white p-4">
         <div className="max-w-md w-full text-center space-y-8">
@@ -228,13 +301,33 @@ export default function ChatPage() {
             upgradeStatus === "pending"
               ? "bg-yellow-600"
               : upgradeStatus === "accepted"
-              ? "bg-green-600"
-              : "bg-red-600"
+                ? "bg-green-600"
+                : "bg-red-600"
           }`}
         >
           {upgradeStatus === "pending" && "Waiting for partner..."}
           {upgradeStatus === "accepted" && "Upgrade accepted! Connecting..."}
           {upgradeStatus === "rejected" && "Partner declined the upgrade"}
+        </div>
+      )}
+
+      {/* Game Invite Modal */}
+      <GameInviteModal gameProposal={gameProposal} onRespond={respondToGame} />
+
+      {/* Game Status Toast */}
+      {gameStatus && (
+        <div
+          className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full font-medium shadow-lg ${
+            gameStatus === "pending"
+              ? "bg-purple-600"
+              : gameStatus === "accepted"
+                ? "bg-green-600"
+                : "bg-red-600"
+          }`}
+        >
+          {gameStatus === "pending" && "Waiting for partner to accept..."}
+          {gameStatus === "accepted" && "Game starting!"}
+          {gameStatus === "rejected" && "Partner declined the game"}
         </div>
       )}
 
@@ -255,7 +348,7 @@ export default function ChatPage() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-4">
-          {/* Upgrade Buttons */}
+          {/* Upgrade Buttons - Always show when connected */}
           {connectionStatus === "connected" &&
             getUpgradeOptions().map((targetMode) => {
               const targetConfig = MODE_CONFIG[targetMode];
@@ -274,14 +367,46 @@ export default function ChatPage() {
               );
             })}
 
+          {/* Play Game Button */}
+          {connectionStatus === "connected" && !gameState.active && (
+            <div className="relative">
+              <button
+                onClick={() => setShowGameMenu(!showGameMenu)}
+                disabled={gameStatus === "pending"}
+                className="bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 px-3 py-2 rounded-lg text-xs sm:text-sm flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                title="Invite to play a game"
+              >
+                <Gamepad2 size={16} />
+                <span className="hidden sm:inline">Play</span>
+              </button>
+              {showGameMenu && (
+                <div className="absolute top-full right-0 mt-2 bg-gray-800 border border-gray-700 rounded-xl shadow-xl overflow-hidden z-50 min-w-[160px]">
+                  {AVAILABLE_GAMES.map((game) => (
+                    <button
+                      key={game.id}
+                      onClick={() => {
+                        requestGame(game.id);
+                        setShowGameMenu(false);
+                      }}
+                      className="w-full px-4 py-3 text-left hover:bg-gray-700 flex items-center gap-2 text-sm"
+                    >
+                      <span>{game.icon}</span>
+                      <span>{game.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Status */}
           <div
             className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 rounded-full text-xs sm:text-sm ${
               connectionStatus === "connected"
                 ? "bg-green-500/10 text-green-400"
                 : connectionStatus === "searching"
-                ? "bg-yellow-500/10 text-yellow-400"
-                : "bg-red-500/10 text-red-400"
+                  ? "bg-yellow-500/10 text-yellow-400"
+                  : "bg-red-500/10 text-red-400"
             }`}
           >
             <span
@@ -289,16 +414,16 @@ export default function ChatPage() {
                 connectionStatus === "connected"
                   ? "bg-green-500"
                   : connectionStatus === "searching"
-                  ? "bg-yellow-500 animate-ping"
-                  : "bg-red-500"
+                    ? "bg-yellow-500 animate-ping"
+                    : "bg-red-500"
               }`}
             />
             <span className="hidden sm:inline">
               {connectionStatus === "connected"
                 ? "Connected"
                 : connectionStatus === "searching"
-                ? "Searching..."
-                : "Disconnected"}
+                  ? "Searching..."
+                  : "Disconnected"}
             </span>
           </div>
 
@@ -320,65 +445,47 @@ export default function ChatPage() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
-        {/* Media Area */}
-        <div
-          className={`${
-            mobileTab === "main" ? "flex" : "hidden"
-          } md:flex flex-1 relative ${
-            chatMode === "video" ? "bg-black" : "bg-gray-900"
-          } p-2 sm:p-4`}
-        >
-          <div className="w-full h-full flex items-center justify-center">
-            {connectionStatus === "searching" ? (
-              <div className="text-center space-y-4">
-                <div
-                  className={`animate-spin rounded-full h-16 w-16 border-b-2 border-${config.color}-500 mx-auto`}
-                />
-                <p className="text-xl font-medium">Finding someone...</p>
-                {socketId && (
-                  <p className="text-xs text-gray-500 font-mono">
-                    Your ID: {socketId.slice(0, 12)}...
-                  </p>
-                )}
-              </div>
-            ) : connectionStatus === "disconnected" ? (
-              <div className="text-center space-y-4">
-                <p className="text-xl font-medium">Partner disconnected</p>
-                <button
-                  onClick={startSearch}
-                  className={`${config.bgClass} ${config.bgHover} text-white px-6 py-3 rounded-xl font-medium`}
-                >
-                  Find New Partner
-                </button>
-              </div>
-            ) : chatMode === "video" ? (
-              <div className="w-full h-full relative rounded-xl sm:rounded-2xl overflow-hidden border border-gray-800">
-                <VideoPlayer
-                  stream={remoteStream}
-                  label="Remote User"
-                  muted={false}
-                />
-                <div className="absolute top-2 right-2 sm:top-4 sm:right-4 w-24 h-18 sm:w-36 sm:h-28 bg-gray-900 rounded-lg sm:rounded-xl overflow-hidden shadow-2xl border border-gray-700 z-20">
-                  <VideoPlayer
-                    stream={localStream}
-                    label="You"
-                    muted={true}
-                    isLocal={true}
-                  />
+        {/* Game Panel - 3-column layout: Video | Game | Chat */}
+        {gameState.active ? (
+          <div className="flex-1 flex overflow-hidden">
+            {/* Left Sidebar - Video feeds (for video/audio modes) */}
+            {chatMode !== "text" && (
+              <div className="w-48 lg:w-64 bg-gray-950 border-r border-gray-800 flex flex-col gap-2 p-2 shrink-0">
+                {/* Partner Video */}
+                <div className="flex-1 relative rounded-xl overflow-hidden bg-gray-900 border border-gray-700">
+                  {chatMode === "video" ? (
+                    <VideoPlayer
+                      stream={remoteStream}
+                      label="Partner"
+                      muted={false}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <div className="bg-gradient-to-br from-purple-600 to-pink-600 p-4 rounded-full animate-pulse">
+                        <Volume2 size={32} className="text-white" />
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ) : chatMode === "audio" ? (
-              <div className="text-center space-y-6">
-                <div className="relative">
-                  <div className="w-32 h-32 sm:w-40 sm:h-40 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center shadow-2xl shadow-purple-500/30 animate-pulse">
-                    <Volume2 size={64} className="text-white" />
-                  </div>
-                  <div className="absolute inset-0 w-32 h-32 sm:w-40 sm:h-40 bg-purple-500/20 rounded-full animate-ping" />
+                {/* Local Video */}
+                <div className="flex-1 relative rounded-xl overflow-hidden bg-gray-900 border border-gray-700">
+                  {chatMode === "video" ? (
+                    <VideoPlayer
+                      stream={localStream}
+                      label="You"
+                      muted={true}
+                      isLocal={true}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <div className="bg-gray-700 p-3 rounded-full">
+                        <Mic size={24} className="text-gray-400" />
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <p className="text-lg font-medium text-gray-300">
-                  Speaking with {partnerId?.slice(0, 8)}...
-                </p>
-                {remoteStream && (
+                {/* Audio element for audio mode */}
+                {remoteStream && chatMode === "audio" && (
                   <audio
                     autoPlay
                     ref={(el) => {
@@ -387,66 +494,181 @@ export default function ChatPage() {
                   />
                 )}
               </div>
-            ) : (
-              // Text mode - Full chat area
-              <div className="w-full h-full max-w-4xl mx-auto flex flex-col">
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {chatHistory.length === 0 && (
-                    <div className="text-center py-8 text-gray-500">
-                      <p>Connected with stranger!</p>
-                      <p className="text-sm">
-                        Say hello to start the conversation
-                      </p>
-                    </div>
+            )}
+
+            {/* Center - Game Panel */}
+            <GamePanel
+              gameId={gameState.gameId}
+              isMyTurn={gameState.isMyTurn}
+              lastGameAction={lastGameAction}
+              sendGameAction={sendGameAction}
+              onEndGame={endGame}
+              socketId={socketId}
+              gameStats={gameStats}
+              recordGameResult={recordGameResult}
+            />
+
+            {/* Right Sidebar - Collapsible Chat */}
+            <div
+              className={`${chatCollapsed ? "w-12" : "w-72 lg:w-80"} bg-gray-950 border-l border-gray-800 flex flex-col transition-all py-3 duration-300 shrink-0`}
+            >
+              {/* Chat Header with collapse toggle */}
+              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+                {!chatCollapsed && (
+                  <span className="text-white font-semibold">Chat</span>
+                )}
+                <button
+                  onClick={() => setChatCollapsed(!chatCollapsed)}
+                  className="text-gray-400 hover:text-white p-1 ml-auto"
+                  title={chatCollapsed ? "Expand chat" : "Collapse chat"}
+                >
+                  {chatCollapsed ? (
+                    <MessageCircle size={18} />
+                  ) : (
+                    <X size={18} />
                   )}
-                  {chatHistory.map((msg, idx) => (
-                    <div
-                      key={idx}
-                      className={`flex ${
-                        msg.sender === "me" ? "justify-end" : "justify-start"
-                      }`}
-                    >
-                      <div
-                        className={`max-w-[80%] px-4 py-3 rounded-2xl ${
-                          msg.sender === "me"
-                            ? "bg-green-600 text-white rounded-br-sm"
-                            : "bg-gray-800 text-gray-100 rounded-bl-sm"
-                        }`}
-                      >
-                        {msg.text}
-                      </div>
-                    </div>
-                  ))}
+                </button>
+              </div>
+              {/* Chat content */}
+              {!chatCollapsed && (
+                <ChatBox
+                  messages={chatHistory}
+                  onSendMessage={sendMessage}
+                  disabled={connectionStatus !== "connected"}
+                  hideHeader={true}
+                />
+              )}
+            </div>
+          </div>
+        ) : (
+          /* Normal Media Area */
+          <div
+            className={`${
+              mobileTab === "main" ? "flex" : "hidden"
+            } md:flex flex-1 relative ${
+              chatMode === "video" ? "bg-black" : "bg-gray-900"
+            } p-2 sm:p-4`}
+          >
+            <div className="w-full h-full flex items-center justify-center">
+              {connectionStatus === "searching" ? (
+                <div className="text-center space-y-4">
+                  <div
+                    className={`animate-spin rounded-full h-16 w-16 border-b-2 border-${config.color}-500 mx-auto`}
+                  />
+                  <p className="text-xl font-medium">Finding someone...</p>
+                  {socketId && (
+                    <p className="text-xs text-gray-500 font-mono">
+                      Your ID: {socketId.slice(0, 12)}...
+                    </p>
+                  )}
                 </div>
-                <div className="p-4 border-t border-gray-800">
-                  <div className="flex gap-3">
-                    <input
-                      type="text"
-                      className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
-                      placeholder="Type a message..."
-                      value={textInput}
-                      onChange={(e) => setTextInput(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      disabled={connectionStatus !== "connected"}
+              ) : connectionStatus === "disconnected" ? (
+                <div className="text-center space-y-4">
+                  <p className="text-xl font-medium">Partner disconnected</p>
+                  <button
+                    onClick={startSearch}
+                    className={`${config.bgClass} ${config.bgHover} text-white px-6 py-3 rounded-xl font-medium`}
+                  >
+                    Find New Partner
+                  </button>
+                </div>
+              ) : chatMode === "video" ? (
+                <div className="w-full h-full relative rounded-xl sm:rounded-2xl overflow-hidden border border-gray-800">
+                  <VideoPlayer
+                    stream={remoteStream}
+                    label="Remote User"
+                    muted={false}
+                  />
+                  <div className="absolute top-2 right-2 sm:top-4 sm:right-4 w-24 h-18 sm:w-36 sm:h-28 bg-gray-900 rounded-lg sm:rounded-xl overflow-hidden shadow-2xl border border-gray-700 z-20">
+                    <VideoPlayer
+                      stream={localStream}
+                      label="You"
+                      muted={true}
+                      isLocal={true}
                     />
-                    <button
-                      onClick={handleSendText}
-                      disabled={
-                        connectionStatus !== "connected" || !textInput.trim()
-                      }
-                      className="bg-green-600 hover:bg-green-700 disabled:bg-gray-700 text-white p-3 rounded-xl transition-colors disabled:cursor-not-allowed"
-                    >
-                      <Send size={20} />
-                    </button>
                   </div>
                 </div>
-              </div>
-            )}
+              ) : chatMode === "audio" ? (
+                <div className="text-center space-y-6">
+                  <div className="relative">
+                    <div className="w-32 h-32 sm:w-40 sm:h-40 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center shadow-2xl shadow-purple-500/30 animate-pulse">
+                      <Volume2 size={64} className="text-white" />
+                    </div>
+                    <div className="absolute inset-0 w-32 h-32 sm:w-40 sm:h-40 bg-purple-500/20 rounded-full animate-ping" />
+                  </div>
+                  <p className="text-lg font-medium text-gray-300">
+                    Speaking with {partnerId?.slice(0, 8)}...
+                  </p>
+                  {remoteStream && (
+                    <audio
+                      autoPlay
+                      ref={(el) => {
+                        if (el) el.srcObject = remoteStream;
+                      }}
+                    />
+                  )}
+                </div>
+              ) : (
+                // Text mode - Full chat area
+                <div className="w-full h-full max-w-4xl mx-auto flex flex-col">
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {chatHistory.length === 0 && (
+                      <div className="text-center py-8 text-gray-500">
+                        <p>Connected with stranger!</p>
+                        <p className="text-sm">
+                          Say hello to start the conversation
+                        </p>
+                      </div>
+                    )}
+                    {chatHistory.map((msg, idx) => (
+                      <div
+                        key={idx}
+                        className={`flex ${
+                          msg.sender === "me" ? "justify-end" : "justify-start"
+                        }`}
+                      >
+                        <div
+                          className={`max-w-[80%] px-4 py-3 rounded-2xl ${
+                            msg.sender === "me"
+                              ? "bg-green-600 text-white rounded-br-sm"
+                              : "bg-gray-800 text-gray-100 rounded-bl-sm"
+                          }`}
+                        >
+                          {msg.text}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="p-4 border-t border-gray-800">
+                    <div className="flex gap-3">
+                      <input
+                        type="text"
+                        className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
+                        placeholder="Type a message..."
+                        value={textInput}
+                        onChange={(e) => setTextInput(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        disabled={connectionStatus !== "connected"}
+                      />
+                      <button
+                        onClick={handleSendText}
+                        disabled={
+                          connectionStatus !== "connected" || !textInput.trim()
+                        }
+                        className="bg-green-600 hover:bg-green-700 disabled:bg-gray-700 text-white p-3 rounded-xl transition-colors disabled:cursor-not-allowed"
+                      >
+                        <Send size={20} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Chat Sidebar - For video/audio modes */}
-        {chatMode !== "text" && (
+        {/* Chat Sidebar - For video/audio modes (hidden during game) */}
+        {chatMode !== "text" && !gameState.active && (
           <div
             className={`${
               mobileTab === "chat" ? "flex h-[50dvh] md:h-auto" : "hidden"
