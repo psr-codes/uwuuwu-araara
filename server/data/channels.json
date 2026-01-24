@@ -1,0 +1,28 @@
+{
+  "channels": [
+    {
+      "id": "anime",
+      "name": "Anime",
+      "description": "Anime, manga, and Japanese culture",
+      "icon": "🎌",
+      "backgroundImage": "/backgrounds/anime.jpg",
+      "accentColor": "#FF6B9D"
+    },
+    {
+      "id": "movies",
+      "name": "Movies",
+      "description": "Films, TV shows, and entertainment",
+      "icon": "🎬",
+      "backgroundImage": "/backgrounds/movies.jpg",
+      "accentColor": "#FFD700"
+    },
+    {
+      "id": "general",
+      "name": "General",
+      "description": "Chat about anything",
+      "icon": "💬",
+      "backgroundImage": null,
+      "accentColor": "#6366F1"
+    }
+  ]
+}

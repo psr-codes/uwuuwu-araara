@@ -18,13 +18,13 @@ import {
   Check,
   Gamepad2,
 } from "lucide-react";
-import { useWebRTC } from "../../../hooks/useWebRTC";
-import VideoPlayer from "../../../components/VideoPlayer";
-import ChatBox from "../../../components/ChatBox";
-import GameInviteModal from "../../../components/GameInviteModal";
-import GamePanel from "../../../components/GamePanel";
-import TopicSelector from "../../../components/TopicSelector";
-import { useVisitTracker } from "../../../hooks/useVisitTracker";
+import { useWebRTC } from "../../../../hooks/useWebRTC";
+import VideoPlayer from "../../../../components/VideoPlayer";
+import ChatBox from "../../../../components/ChatBox";
+import GameInviteModal from "../../../../components/GameInviteModal";
+import GamePanel from "../../../../components/GamePanel";
+import GameHeaderBar from "../../../../components/GameHeaderBar";
+import { useVisitTracker } from "../../../../hooks/useVisitTracker";
 
 const VALID_MODES = ["video", "audio", "text"];
 
@@ -70,11 +70,21 @@ const MODE_CONFIG = {
 export default function ChatPage() {
   const params = useParams();
   const urlMode = params.mode;
+  const urlChannel = params.channel || "general";
 
   // Validate mode from URL
   const initialMode = VALID_MODES.includes(urlMode) ? urlMode : "video";
 
-  useVisitTracker(`/chat/${initialMode}`);
+  // Get topics from sessionStorage (set by channel page)
+  const [initialTopics] = useState(() => {
+    if (typeof window !== "undefined") {
+      const stored = sessionStorage.getItem("selectedTopics");
+      return stored ? JSON.parse(stored) : ["casual"];
+    }
+    return ["casual"];
+  });
+
+  useVisitTracker(`/${urlChannel}/chat/${initialMode}`);
 
   const {
     localStream,
@@ -102,10 +112,10 @@ export default function ChatPage() {
     endGame,
     gameStats,
     recordGameResult,
-    // Topic selection
+    // Channel and topic selection
+    channel,
     selectedTopics,
-    setSelectedTopics,
-  } = useWebRTC(initialMode);
+  } = useWebRTC(initialMode, urlChannel, initialTopics);
 
   const [mobileTab, setMobileTab] = useState("main");
   const [textInput, setTextInput] = useState("");
@@ -206,11 +216,11 @@ export default function ChatPage() {
       <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-center text-white p-4">
         <div className="max-w-md w-full text-center space-y-8">
           <Link
-            href="/"
+            href={`/${channel}`}
             className="inline-flex items-center gap-2 text-gray-400 hover:text-white transition-colors mb-4"
           >
             <Home size={16} />
-            <span className="text-sm">Back to Home</span>
+            <span className="text-sm">Back to Channel</span>
           </Link>
 
           <div className="flex justify-center mb-6">
@@ -229,20 +239,12 @@ export default function ChatPage() {
             {config.description}
           </p>
 
-          {/* Topic Selector */}
-          <div className="text-left bg-gray-900/50 rounded-xl p-4 border border-gray-800">
-            <h3 className="text-sm font-medium text-gray-300 mb-3">
-              🎯 Select Topics (optional)
-            </h3>
-            <TopicSelector
-              selectedTopics={selectedTopics}
-              onTopicsChange={setSelectedTopics}
-              disabled={false}
-            />
-            <p className="text-xs text-gray-500 mt-2">
-              Match with people interested in similar topics
-            </p>
-          </div>
+          {/* Show selected topics */}
+          {selectedTopics.length > 0 && (
+            <div className="text-sm text-gray-500">
+              Topics: {selectedTopics.join(", ")}
+            </div>
+          )}
 
           <button
             onClick={startSearch}
@@ -352,7 +354,7 @@ export default function ChatPage() {
       )}
 
       {/* Header */}
-      <header className="h-14 sm:h-16 border-b border-gray-800 flex items-center justify-between px-3 sm:px-6 bg-gray-950 z-10 shrink-0">
+      <header className="h-14 sm:h-16 border-b border-gray-800 flex items-center justify-between px-3 sm:px-6 bg-gray-950 relative z-30 shrink-0">
         <div className="flex items-center gap-2">
           <Link
             href="/"
@@ -400,7 +402,7 @@ export default function ChatPage() {
                 <span className="hidden sm:inline">Play</span>
               </button>
               {showGameMenu && (
-                <div className="absolute top-full right-0 mt-2 bg-gray-800 border border-gray-700 rounded-xl shadow-xl overflow-hidden z-50 min-w-[160px]">
+                <div className="absolute top-full right-0 mt-2 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl overflow-hidden z-[100] min-w-[160px]">
                   {AVAILABLE_GAMES.map((game) => (
                     <button
                       key={game.id}
@@ -463,14 +465,73 @@ export default function ChatPage() {
         </div>
       </header>
 
+      {/* Game Header Bar - Shows when connected */}
+      <GameHeaderBar
+        gameStats={gameStats}
+        gameState={gameState}
+        isMyTurn={gameState.isMyTurn}
+        onRequestGame={requestGame}
+        onEndGame={endGame}
+        isConnected={connectionStatus === "connected"}
+        gameStatus={gameStatus}
+      />
+
       {/* Main Content */}
       <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
-        {/* Game Panel - 3-column layout: Video | Game | Chat */}
+        {/* Game Panel - Responsive layout */}
         {gameState.active ? (
-          <div className="flex-1 flex overflow-hidden">
-            {/* Left Sidebar - Video feeds (for video/audio modes) */}
+          <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+            {/* Mobile: Horizontal video strip at top */}
             {chatMode !== "text" && (
-              <div className="w-48 lg:w-64 bg-gray-950 border-r border-gray-800 flex flex-col gap-2 p-2 shrink-0">
+              <div className="md:hidden flex gap-2 p-2 bg-gray-950 border-b border-gray-800 shrink-0">
+                {/* Partner Video - Small thumbnail */}
+                <div className="w-20 h-16 relative rounded-lg overflow-hidden bg-gray-900 border border-gray-700">
+                  {chatMode === "video" ? (
+                    <VideoPlayer
+                      stream={remoteStream}
+                      label="Partner"
+                      muted={false}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <div className="bg-gradient-to-br from-purple-600 to-pink-600 p-2 rounded-full animate-pulse">
+                        <Volume2 size={16} className="text-white" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {/* Local Video - Small thumbnail */}
+                <div className="w-20 h-16 relative rounded-lg overflow-hidden bg-gray-900 border border-gray-700">
+                  {chatMode === "video" ? (
+                    <VideoPlayer
+                      stream={localStream}
+                      label="You"
+                      muted={true}
+                      isLocal={true}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <div className="bg-gray-700 p-2 rounded-full">
+                        <Mic size={14} className="text-gray-400" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {/* Audio element for audio mode */}
+                {remoteStream && chatMode === "audio" && (
+                  <audio
+                    autoPlay
+                    ref={(el) => {
+                      if (el) el.srcObject = remoteStream;
+                    }}
+                  />
+                )}
+              </div>
+            )}
+
+            {/* Desktop: Left Sidebar - Video feeds */}
+            {chatMode !== "text" && (
+              <div className="hidden md:flex w-48 lg:w-64 bg-gray-950 border-r border-gray-800 flex-col gap-2 p-2 shrink-0">
                 {/* Partner Video */}
                 <div className="flex-1 relative rounded-xl overflow-hidden bg-gray-900 border border-gray-700">
                   {chatMode === "video" ? (
@@ -526,6 +587,7 @@ export default function ChatPage() {
               socketId={socketId}
               gameStats={gameStats}
               recordGameResult={recordGameResult}
+              hideHeader={true}
             />
 
             {/* Right Sidebar - Collapsible Chat */}
@@ -565,11 +627,12 @@ export default function ChatPage() {
           <div
             className={`${
               mobileTab === "main" ? "flex" : "hidden"
-            } md:flex flex-1 relative ${
+            } md:flex flex-1 flex-col relative ${
               chatMode === "video" ? "bg-black" : "bg-gray-900"
-            } p-2 sm:p-4`}
+            }`}
           >
-            <div className="w-full h-full flex items-center justify-center">
+            {/* Main content area */}
+            <div className="flex-1 flex items-center justify-center p-2 sm:p-4">
               {connectionStatus === "searching" ? (
                 <div className="text-center space-y-4">
                   <div
@@ -599,7 +662,7 @@ export default function ChatPage() {
                     label="Remote User"
                     muted={false}
                   />
-                  <div className="absolute top-2 right-2 sm:top-4 sm:right-4 w-24 h-18 sm:w-36 sm:h-28 bg-gray-900 rounded-lg sm:rounded-xl overflow-hidden shadow-2xl border border-gray-700 z-20">
+                  <div className="absolute top-2 right-2 sm:top-4 sm:right-4 w-20 h-15 sm:w-36 sm:h-28 bg-gray-900 rounded-lg sm:rounded-xl overflow-hidden shadow-2xl border border-gray-700 z-10">
                     <VideoPlayer
                       stream={localStream}
                       label="You"
@@ -611,12 +674,16 @@ export default function ChatPage() {
               ) : chatMode === "audio" ? (
                 <div className="text-center space-y-6">
                   <div className="relative">
-                    <div className="w-32 h-32 sm:w-40 sm:h-40 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center shadow-2xl shadow-purple-500/30 animate-pulse">
-                      <Volume2 size={64} className="text-white" />
+                    <div className="w-24 h-24 sm:w-40 sm:h-40 bg-gradient-to-br from-purple-600 to-pink-600 rounded-full flex items-center justify-center shadow-2xl shadow-purple-500/30 animate-pulse mx-auto">
+                      <Volume2 size={48} className="text-white sm:hidden" />
+                      <Volume2
+                        size={64}
+                        className="text-white hidden sm:block"
+                      />
                     </div>
-                    <div className="absolute inset-0 w-32 h-32 sm:w-40 sm:h-40 bg-purple-500/20 rounded-full animate-ping" />
+                    <div className="absolute inset-0 w-24 h-24 sm:w-40 sm:h-40 bg-purple-500/20 rounded-full animate-ping mx-auto" />
                   </div>
-                  <p className="text-lg font-medium text-gray-300">
+                  <p className="text-base sm:text-lg font-medium text-gray-300">
                     Speaking with {partnerId?.slice(0, 8)}...
                   </p>
                   {remoteStream && (

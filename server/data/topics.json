@@ -1,0 +1,9 @@
+{
+  "topics": [
+    { "id": "casual", "name": "Casual", "icon": "☕", "description": "Relaxed conversation" },
+    { "id": "serious", "name": "Serious", "icon": "🎯", "description": "Deep discussions" },
+    { "id": "dating", "name": "Dating", "icon": "💕", "description": "Looking for connection" },
+    { "id": "gaming", "name": "Gaming", "icon": "🎮", "description": "Video games and esports" },
+    { "id": "music", "name": "Music", "icon": "🎵", "description": "Music lovers" }
+  ]
+}

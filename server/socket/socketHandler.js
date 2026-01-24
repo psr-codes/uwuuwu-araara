@@ -13,23 +13,38 @@ module.exports = (io) => {
     registerGameHandler(io, socket, activeConnections);
 
     socket.on("join_queue", async (data = {}) => {
+      const channel = data.channel || "general";
       const chatMode = data.chatMode || "video";
+      const topics = data.topics || ["casual"];
+
       console.log(
-        `[QUEUE] User ${socket.id} joining queue (mode: ${chatMode})`,
+        `[QUEUE] User ${socket.id} joining queue (channel: ${channel}, mode: ${chatMode}, topics: ${topics.join(", ")})`,
       );
 
-      await queueService.addUser(socket.id, chatMode);
+      const result = await queueService.addUser(
+        socket.id,
+        channel,
+        chatMode,
+        topics,
+      );
       socket.emit("socket_id", socket.id);
 
-      const match = await queueService.findMatch(chatMode, (id) => {
-        const isOnline = io.sockets.sockets.has(id);
-        console.log(`[QUEUE] Checking if ${id} is online: ${isOnline}`);
-        return isOnline;
-      });
+      const match = await queueService.findMatch(
+        channel,
+        chatMode,
+        (id) => {
+          const isOnline = io.sockets.sockets.has(id);
+          console.log(`[QUEUE] Checking if ${id} is online: ${isOnline}`);
+          return isOnline;
+        },
+        result.topics,
+      );
 
       if (match) {
         const [peer1, peer2] = match;
-        console.log(`[MATCH] Found: ${peer1} <-> ${peer2} (mode: ${chatMode})`);
+        console.log(
+          `[MATCH] Found: ${peer1} <-> ${peer2} (channel: ${channel}, mode: ${chatMode})`,
+        );
 
         // Track the connection
         activeConnections.set(peer1, peer2);
@@ -41,7 +56,7 @@ module.exports = (io) => {
         trackConnection(chatMode, peer1, peer2);
       } else {
         console.log(
-          `[QUEUE] No match for ${socket.id} in ${chatMode}, waiting`,
+          `[QUEUE] No match for ${socket.id} in ${channel}:${chatMode}, waiting`,
         );
       }
     });
@@ -100,8 +115,11 @@ module.exports = (io) => {
 
     // ========== DISCONNECT ==========
 
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
       console.log(`[SOCKET] User disconnected: ${socket.id}`);
+
+      // Clean up user from all topic queues
+      await queueService.cleanupUser(socket.id);
 
       // Notify partner of disconnect
       const partnerId = activeConnections.get(socket.id);

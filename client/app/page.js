@@ -1,20 +1,31 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
-import {
-  Video,
-  Mic,
-  MessageSquare,
-  Sparkles,
-  Users,
-  Shield,
-  Zap,
-} from "lucide-react";
+import { Sparkles, Users, Shield, Zap, Loader2 } from "lucide-react";
 import { useVisitTracker } from "../hooks/useVisitTracker";
 
+const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
+
 export default function Home() {
-  // Track visit to landing page
   useVisitTracker("/");
+
+  const [channels, setChannels] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${SOCKET_URL}/api/channels`)
+      .then((res) => res.json())
+      .then((data) => {
+        setChannels(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error("Failed to load channels:", err);
+        setLoading(false);
+      });
+  }, []);
+
   return (
     <div className="min-h-screen bg-gray-950 text-white">
       {/* Animated background */}
@@ -60,80 +71,67 @@ export default function Home() {
               </span>
             </h1>
             <p className="text-lg sm:text-xl text-gray-400 max-w-2xl mx-auto">
-              Choose your way to meet new people from around the world. Video,
-              audio, or text — the choice is yours.
+              Join a channel that matches your interests. Video, audio, or text
+              — the choice is yours.
             </p>
           </div>
 
-          {/* Chat Mode Cards */}
+          {/* Channel Cards */}
           <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto mb-20">
-            {/* Video Chat Card */}
-            <Link href="/chat/video" className="group">
-              <div className="relative bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700/50 rounded-2xl p-6 sm:p-8 transition-all duration-300 hover:border-blue-500/50 hover:shadow-lg hover:shadow-blue-500/10 hover:-translate-y-1">
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-600/10 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="relative">
-                  <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center mb-5 shadow-lg shadow-blue-500/25">
-                    <Video size={28} className="text-white" />
-                  </div>
-                  <h3 className="text-xl font-semibold mb-2">Video Chat</h3>
-                  <p className="text-gray-400 text-sm mb-4">
-                    Face-to-face conversations with video, audio, and text
-                    messaging.
-                  </p>
-                  <div className="flex items-center gap-2 text-blue-400 text-sm font-medium group-hover:gap-3 transition-all">
-                    Start Video Chat
-                    <span className="group-hover:translate-x-1 transition-transform">
-                      →
-                    </span>
-                  </div>
-                </div>
+            {loading ? (
+              <div className="col-span-3 flex justify-center py-12">
+                <Loader2 className="w-8 h-8 text-gray-400 animate-spin" />
               </div>
-            </Link>
-
-            {/* Audio Chat Card */}
-            <Link href="/chat/audio" className="group">
-              <div className="relative bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700/50 rounded-2xl p-6 sm:p-8 transition-all duration-300 hover:border-purple-500/50 hover:shadow-lg hover:shadow-purple-500/10 hover:-translate-y-1">
-                <div className="absolute inset-0 bg-gradient-to-br from-purple-600/10 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="relative">
-                  <div className="w-14 h-14 bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl flex items-center justify-center mb-5 shadow-lg shadow-purple-500/25">
-                    <Mic size={28} className="text-white" />
+            ) : (
+              channels.map((channel) => (
+                <Link
+                  key={channel.id}
+                  href={`/${channel.id}`}
+                  className="group"
+                >
+                  <div
+                    className="relative bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700/50 rounded-2xl p-6 sm:p-8 transition-all duration-300 hover:border-opacity-100 hover:shadow-lg hover:-translate-y-1"
+                    style={{
+                      "--accent": channel.accentColor,
+                      borderColor: `${channel.accentColor}30`,
+                    }}
+                  >
+                    <div
+                      className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity"
+                      style={{
+                        background: `linear-gradient(to bottom right, ${channel.accentColor}10, transparent)`,
+                      }}
+                    />
+                    <div className="relative">
+                      <div
+                        className="w-14 h-14 rounded-xl flex items-center justify-center mb-5 shadow-lg text-2xl"
+                        style={{
+                          background: `linear-gradient(to bottom right, ${channel.accentColor}, ${channel.accentColor}CC)`,
+                          boxShadow: `0 10px 25px -5px ${channel.accentColor}40`,
+                        }}
+                      >
+                        {channel.icon}
+                      </div>
+                      <h3 className="text-xl font-semibold mb-2">
+                        {channel.name}
+                      </h3>
+                      <p className="text-gray-400 text-sm mb-4">
+                        {channel.description}
+                      </p>
+                      <div
+                        className="flex items-center gap-2 text-sm font-medium group-hover:gap-3 transition-all"
+                        style={{ color: channel.accentColor }}
+                      >
+                        Enter Channel
+                        <span className="group-hover:translate-x-1 transition-transform">
+                          →
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <h3 className="text-xl font-semibold mb-2">Audio Chat</h3>
-                  <p className="text-gray-400 text-sm mb-4">
-                    Voice conversations without video. Perfect for on-the-go
-                    chats.
-                  </p>
-                  <div className="flex items-center gap-2 text-purple-400 text-sm font-medium group-hover:gap-3 transition-all">
-                    Start Audio Chat
-                    <span className="group-hover:translate-x-1 transition-transform">
-                      →
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </Link>
-
-            {/* Text Chat Card */}
-            <Link href="/chat/text" className="group">
-              <div className="relative bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700/50 rounded-2xl p-6 sm:p-8 transition-all duration-300 hover:border-green-500/50 hover:shadow-lg hover:shadow-green-500/10 hover:-translate-y-1">
-                <div className="absolute inset-0 bg-gradient-to-br from-green-600/10 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="relative">
-                  <div className="w-14 h-14 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center mb-5 shadow-lg shadow-green-500/25">
-                    <MessageSquare size={28} className="text-white" />
-                  </div>
-                  <h3 className="text-xl font-semibold mb-2">Text Chat</h3>
-                  <p className="text-gray-400 text-sm mb-4">
-                    Classic text messaging. Quick, anonymous, and easy to use.
-                  </p>
-                  <div className="flex items-center gap-2 text-green-400 text-sm font-medium group-hover:gap-3 transition-all">
-                    Start Text Chat
-                    <span className="group-hover:translate-x-1 transition-transform">
-                      →
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </Link>
+                </Link>
+              ))
+            )}
           </div>
 
           {/* Features */}
@@ -160,9 +158,9 @@ export default function Home() {
               <div className="w-12 h-12 bg-gray-800 rounded-full flex items-center justify-center mb-4">
                 <Users size={24} className="text-green-400" />
               </div>
-              <h4 className="font-medium mb-1">Global Community</h4>
+              <h4 className="font-medium mb-1">Topic Matching</h4>
               <p className="text-sm text-gray-500">
-                Meet people from around the world
+                Find people with similar interests
               </p>
             </div>
           </div>

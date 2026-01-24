@@ -27,7 +27,7 @@ export default function VideoPlayer({ stream, muted = false, label, isLocal = fa
   }, [stream, label]);
 
   return (
-    <div className="relative w-full h-full bg-gray-900 rounded-lg overflow-hidden border border-gray-700 shadow-lg">
+    <div className="group relative w-full h-full bg-gray-900 rounded-lg overflow-hidden border border-gray-700 shadow-lg">
       {stream ? (
         <video
           ref={videoRef}
@@ -45,17 +45,18 @@ export default function VideoPlayer({ stream, muted = false, label, isLocal = fa
         </div>
       )}
       
-      {/* Label Badge */}
+      {/* Label Badge - Always visible */}
       <div className="absolute bottom-2 left-2 bg-black/70 px-2 py-1 rounded text-xs text-white font-medium">
         {label}
       </div>
       
-      {/* Stream Debug Info */}
+      {/* Stream Debug Info - Only visible on hover */}
       {stream && (
-        <div className="absolute top-2 left-2 bg-black/70 px-2 py-1 rounded text-[10px] text-green-400 font-mono">
+        <div className="absolute top-2 left-2 bg-black/70 px-2 py-1 rounded text-[10px] text-green-400 font-mono opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           {stream.getTracks().map(t => t.kind[0]).join('+')} | {stream.id.slice(0, 8)}
         </div>
       )}
     </div>
   );
 }
+

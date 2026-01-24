@@ -6,7 +6,11 @@ import SimplePeer from "simple-peer";
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL;
 
-export function useWebRTC(initialChatMode = "video") {
+export function useWebRTC(
+  initialChatMode = "video",
+  initialChannel = "general",
+  initialTopics = ["casual"],
+) {
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState("idle");
@@ -46,9 +50,25 @@ export function useWebRTC(initialChatMode = "video") {
   const signalBuffer = useRef([]);
   const chatModeRef = useRef(initialChatMode);
 
+  // Channel state
+  const [channel, setChannel] = useState(initialChannel);
+  const channelRef = useRef(initialChannel);
+
+  // Topic selection state
+  const [selectedTopics, setSelectedTopics] = useState(initialTopics);
+  const selectedTopicsRef = useRef(initialTopics);
+
   useEffect(() => {
     chatModeRef.current = chatMode;
   }, [chatMode]);
+
+  useEffect(() => {
+    channelRef.current = channel;
+  }, [channel]);
+
+  useEffect(() => {
+    selectedTopicsRef.current = selectedTopics;
+  }, [selectedTopics]);
 
   const initializeMedia = useCallback(async (mode = null) => {
     const targetMode = mode || chatModeRef.current;
@@ -172,7 +192,11 @@ export function useWebRTC(initialChatMode = "video") {
 
     socket.on("connect", () => {
       setSocketId(socket.id);
-      socket.emit("join_queue", { chatMode: chatModeRef.current });
+      socket.emit("join_queue", {
+        channel: channelRef.current,
+        chatMode: chatModeRef.current,
+        topics: selectedTopicsRef.current,
+      });
     });
 
     socket.on("socket_id", (id) => setSocketId(id));
@@ -432,5 +456,10 @@ export function useWebRTC(initialChatMode = "video") {
     endGame,
     gameStats,
     recordGameResult,
+    // Channel and topic selection
+    channel,
+    setChannel,
+    selectedTopics,
+    setSelectedTopics,
   };
 }

@@ -27,6 +27,18 @@ app.get("/", (req, res) => {
   res.send("Server is running");
 });
 
+// Channels API: Get available chat channels
+app.get("/api/channels", (req, res) => {
+  const queueService = require("./services/queueService");
+  res.json(queueService.getChannels());
+});
+
+// Topics API: Get available chat topics
+app.get("/api/topics", (req, res) => {
+  const queueService = require("./services/queueService");
+  res.json(queueService.getTopics());
+});
+
 // Analytics API: Track a visit
 app.post("/api/analytics/visit", async (req, res) => {
   const { page, userAgent, referrer } = req.body;
